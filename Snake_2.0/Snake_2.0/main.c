@@ -1,28 +1,28 @@
 /*
- * Snake_2.0.c
+ * Final_snake.c
  *
  * Created: 20/09/2020 06:52:01 p. m.
  * Author : Alejandro
- */ 
-
+ */
 #define F_CPU 1000000UL
+#include <avr/interrupt.h>
 #include <util/delay.h>
-#include <stdio.h>
+#include <stdbool.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <avr/io.h>
-#include <stdbool.h>
+#include <stdio.h>
 ////////////////////////////////------------>CONSTANTES////////////////////////////////////////////////////
 #define UP		    1 << PD3
-#define DOWN		1 << PD0
-#define LEFT		1 << PD1
-#define RIGHT		1 << PD2
+#define DOWN		1 << PD2
+#define LEFT		1 << PD7
+#define RIGHT		1 << PD4
 struct Position
 {
 	int8_t x; //3 bits would be enough to represent a width of 8 but oh well
 	int8_t y;
-} food, direction;
+}food, direction;
 enum Cell
 {
 	EMPTY, SNAKE_LEFT, SNAKE_RIGHT, SNAKE_UP, SNAKE_DOWN, FOOD, BONUS
@@ -37,52 +37,59 @@ struct Snake //89 bytes
 	struct Position head, tail;
 	uint8_t belly; //score
 	uint8_t length;
-} snake;
+}snake;
 struct World
 {
-	enum Cell grid[35]; //again, this should ideally be dynamically allocated depending on the size of the LED matrix
+	enum Cell grid[35]; // Again, this should ideally be dynamically allocated depending on the size of the LED matrix
 	uint8_t height;
 	uint8_t width;
 	enum State state;
-} world;
+}world;
+volatile uint8_t button_g = 0;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////------------->FUNCIONES////////////////////////////////////////////////////
+void init_interrupts()
+{
+	EICRA |= (1 << ISC11)|(1 << ISC10)|(1 << ISC11)|(1 << ISC10);
+	// Es necesario habilitar los pines, para que el microcontrolador
+	// active la función.
+	EIMSK |= (1 << INT1)|(1 << INT0);
+	sei();
+	//Siempre activan en cambio de estado
+	PCICR = (1<<PCIE0);
+	PCMSK2 |= (1<<PCINT0);
+	PCMSK0 |= (1<<PCINT7);
+}
 const struct Snake *get_snake(void)
 {
 	return &snake;
-}
-const struct World *get_world(void)
-{
-	return &world;
 }
 void handle_keypress(const struct Position *_direction)
 {
 	//ignore directions that don't make sense
 	if(_direction->x == _direction->y)
-	{ 
-		//{1, 1}, {-1, 1}, {0, 0}
+	{
 		return;
 	}
-	if (_direction->x != 0 && _direction->y != 0)
-	{ 
-		//{-1, 1}, {1, -1}
+	if(_direction->x != 0 && _direction->y != 0) //{-1, 1}, {1, -1}
+	{
 		return;
 	}
 	//ignore conflicting directions like making the snake go up when it's going down
 	//or making it go left when it's moving right or vice versa
-	if (_direction->x + direction.x == 0)
+	if(_direction->x + direction.x == 0)
 	{
 		return;	
 	}
-	if (_direction->y + direction.y == 0)
+	if(_direction->y + direction.y == 0)
 	{
-		return;	
+		return;
 	}
 	direction = *_direction;
 }
-void set_cell(const struct Position *position, enum Cell value) 
+void set_cell(const struct Position *position, enum Cell value) //ditto
 {
 	world.grid[position->y * world.width + position->x] = value;
 }
@@ -92,37 +99,31 @@ struct Position direction_to_position(enum Cell direction)
 	switch (direction)
 	{
 		case SNAKE_UP:
-			position.y--;
-			break;
+		position.y--;
+		break;
 		case SNAKE_DOWN:
-			position.y++;
-			break;
+		position.y++;
+		break;
 		case SNAKE_LEFT:
-			position.x--;
-			break;
+		position.x--;
+		break;
 		case SNAKE_RIGHT:
-			position.x++;
-			break;
+		position.x++;
+		break;
 		default:
-			printf("Impossible : %u\n", direction);
-			break;
+		printf("Impossible : %u\n", direction);
+		break;
 	}
 	return position;
 }
 enum Cell position_to_direction(const struct Position *position)
 {
 	if (position->x == -1)
-	{
-		return SNAKE_LEFT;
-	}
+	return SNAKE_LEFT;
 	if (position->x == 1)
-	{
-		return SNAKE_RIGHT;	
-	}
+	return SNAKE_RIGHT;
 	if (position->y == -1)
-	{
-		return SNAKE_UP;
-	}
+	return SNAKE_UP;
 	return SNAKE_DOWN;
 }
 enum Cell cell_at(const struct Position *position) //probably belongs in a utils.h file
@@ -137,16 +138,8 @@ void place_food(void)
 	{
 		food.x = rand() % world.width;
 		food.y = rand() % world.height;
-	} while (cell_at(&food) != EMPTY);
+	}while(cell_at(&food) != EMPTY);
 	set_cell(&food, FOOD);
-}
-enum State get_state(void)
-{
-	return world.state;
-}
-void set_state(enum State state)
-{
-	world.state = state;
 }
 void handle_wrapping(struct Position *position)
 {
@@ -213,13 +206,20 @@ void move_tail(void)
 	else
 	{
 		set_cell(&snake.tail, EMPTY);
-		snake.tail = tail;
 	}
+	snake.tail = tail;
 }
-void print_info()
+enum State get_state(void)
 {
-	printf("Head : %d, %d\n", snake.head.x, snake.head.y);
-	printf("Tail : %d, %d\n", snake.tail.x, snake.tail.y);
+	return world.state;
+}
+void set_state(enum State state)
+{
+	world.state = state;
+}
+const struct World *get_world(void)
+{
+	return &world;
 }
 void eat_food(const struct Position *head, enum Cell food_type)
 {
@@ -231,10 +231,11 @@ void eat_food(const struct Position *head, enum Cell food_type)
 void tick(void)
 {
 	set_cell(&snake.head, position_to_direction(&direction));
-	struct Position head = {
+	struct Position head = 
+	{
 		.x = direction.x + snake.head.x,
 		.y = direction.y + snake.head.y
-		};
+	};
 	handle_wrapping(&head);
 	enum Cell cell = cell_at(&head);
 	switch (cell)
@@ -250,9 +251,9 @@ void tick(void)
 		default:
 			if (head.x == snake.tail.x && head.y == snake.tail.y)
 			{
-				printf("Inside tick()'s default label");
 				move_head(&head);
 				move_tail();
+				world.state = MENU;
 			}
 			else
 			{
@@ -273,26 +274,46 @@ void init_game(void)
 	uint8_t c;
 	for (c = 0; c < world.width * world.height; c++)
 	{
-		world.grid[c] = EMPTY;
+		world.grid[c] = EMPTY;	
 	}
-	struct Position pos = {(world.width/2), world.height/2};
+	struct Position pos = {world.width / 2, world.height / 2};
 	set_cell(&pos, SNAKE_LEFT);
 	snake.head = pos;
-	pos = (struct Position){(world.width/2) + 1, world.height/2};
+	pos = (struct Position){world.width / 2 + 1, world.height / 2};
 	set_cell(&pos, SNAKE_LEFT);
-	pos = (struct Position){(world.width/2) + 2, world.height/2};
+	pos = (struct Position){world.width / 2 + 2, world.height / 2};
 	set_cell(&pos, SNAKE_LEFT);
 	snake.tail = pos;
 	place_food();
 	handle_keypress(&direction);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////------------>INTERRUPCIONES/////////////////////////////////////////////
+ISR(INT0_vect)
+{
+	button_g = 2;
+}
+ISR(INT1_vect)
+{
+	button_g = 1;
+}
+ISR(PCINT1_vect)
+{
+	button_g = 3;
+}
+ISR(PCINT0_vect)
+{
+	button_g = 3;
+}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////------------->MATRIZ////////////////////////////////////////////////////
-uint8_t reverse_bits(uint8_t byte);
 void init_matrix(void)
 {
-	DDRC = 0xFF;
+	DDRC = 0b00000001;
 	DDRB = 0b01111111;
+	DDRD = 0x00;
 }
 void write_column(uint8_t data, uint8_t column)
 {
@@ -306,7 +327,7 @@ void write_column(uint8_t data, uint8_t column)
 /////////////////////////////////-------------->PAD///////////////////////////////////////////////////////
 void init_dpad(void)
 {
-	DDRD = 0x00;
+	DDRD &= ~(UP | DOWN | LEFT | RIGHT);
 }
 bool button_pressed(uint8_t button)
 {
@@ -317,12 +338,12 @@ bool any_pressed(void)
 	return PIND & (UP | DOWN | LEFT | RIGHT);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////-------------->RENDER GAME///////////////////////////////////////////////////
+/////////////////////////////------------------>RENDER GAME///////////////////////////////////////////////
 void render(int repetitions)
 {
-	const struct World *world = get_world();
 	while(repetitions--) //it only displays correctly when multiplexing repeatedly
 	{
+		const struct World *world = get_world();
 		uint8_t col, row;
 		for(col = 0; col < world->width; col++)
 		{
@@ -331,9 +352,7 @@ void render(int repetitions)
 			{
 				struct Position cell = {.x = col, .y = row};
 				if(cell_at(&cell) != EMPTY)
-				{
-					data |= (1 << row);	
-				}
+				data |= 1 << row;
 			}
 			write_column(data, col);
 		}
@@ -342,46 +361,45 @@ void render(int repetitions)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-////////////////////////////////////-------------->MAIN///////////////////////////////////////////////////
+/////////////////////////////------------------>MAIN//////////////////////////////////////////////////////
 int main(void)
 {
 	init_game();
 	set_state(GAME);
 	struct Position direction = {.x = 0, .y = 1};
 	init_matrix();
-	init_dpad();
+	init_interrupts();
 	uint8_t tick_interval = 10;
 	for(;;)
 	{
 		if(get_state() == GAME)
 		{
 			/* this should be put in a PCINT interrupt vector*/
-			if(button_pressed(UP))
+			if(button_g == 1)
 			{
 				direction.x = 0;
 				direction.y = -1;
 			}
-			else if(button_pressed(DOWN))
+			else if(button_g == 2)
 			{
 				direction.x = 0;
 				direction.y = 1;
 			}
-			else if(button_pressed(LEFT))
+			else if(button_g == 3)
 			{
 				direction.x = -1;
 				direction.y = 0;
 			}
-			else if(button_pressed(RIGHT))
+			else if(button_g == 4)
 			{
 				direction.x = 1;
 				direction.y = 0;
 			}
 			handle_keypress(&direction);
 			/* pin change interrupt end */
-
 			//this should be put in a timer interrupt
 			render(5);
-			_delay_ms(20);
+			_delay_ms(8);
 			if(tick_interval-- == 0)
 			{
 				tick_interval = 10;
@@ -406,6 +424,4 @@ int main(void)
 		}
 	}
 }
-///////////////////////////////////<--------------/MAIN///////////////////////////////////////////////////
-
-
+/////////////////////////////<-----------------/MAIN//////////////////////////////////////////////////////
